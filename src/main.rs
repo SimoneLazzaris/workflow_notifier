@@ -1,9 +1,8 @@
+use clap::Parser;
 use reqwest;
 use std::collections::HashMap;
-use clap::Parser;
 use tide::log::{debug, error, info};
 use tide::prelude::*;
-
 
 // Configuration
 #[derive(Parser)]
@@ -34,7 +33,7 @@ struct Workflow {
     path: String,
     event: String,
     status: String,
-    conclusion: String,
+    conclusion: Option<String>,
     html_url: String,
 }
 #[derive(Debug, Deserialize)]
@@ -50,16 +49,12 @@ struct Payload {
     sender: Sender,
 }
 
-async fn send_msg(text: &str, hook:&str) -> Result<reqwest::Response, reqwest::Error> {
-    debug!("Sending message {}",text);
+async fn send_msg(text: &str, hook: &str) -> Result<reqwest::Response, reqwest::Error> {
+    debug!("Sending message {}", text);
     let mut msg = HashMap::new();
     msg.insert("text", text);
     let client = reqwest::Client::new();
-    let res = client
-        .post(hook)
-        .json(&msg)
-        .send()
-        .await;
+    let res = client.post(hook).json(&msg).send().await;
     match res {
         Ok(_) => info!("Message sent"),
         Err(_) => error!("Error"),
@@ -70,11 +65,9 @@ async fn send_msg(text: &str, hook:&str) -> Result<reqwest::Response, reqwest::E
 #[async_std::main]
 async fn main() -> tide::Result<()> {
     env_logger::init();
-    let cfg= Cfg::parse();
-    let state = State {
-        hook: cfg.webhook,
-    };
-    let addr=format!("{}:{}", cfg.address, cfg.port);
+    let cfg = Cfg::parse();
+    let state = State { hook: cfg.webhook };
+    let addr = format!("{}:{}", cfg.address, cfg.port);
     let mut app = tide::with_state(state);
     app.at("/webhook").post(incoming_webhook);
     app.at("/dump").post(dumper);
@@ -97,12 +90,20 @@ async fn incoming_webhook(mut req: tide::Request<State>) -> tide::Result {
         "Received status '{}' for workflow '{}'\n",
         wf.status, wf.name
     );
-    if wf.conclusion == "success" {
+    if wf.conclusion.is_none() {
+        debug!("Not concluded workflow");
+        return Ok("Ok (not concluded workflow)\n".into());
+    }
+    let conclusion = wf.conclusion.unwrap();
+    if conclusion == "success" {
         debug!("Workflow succeded for {}", j.repository.name);
         return Ok(resp.into());
     }
     if wf.head_branch != "main" && wf.head_branch != "master" {
-        debug!("Workflow NOT succeded for {}/{}", j.repository.name, wf.head_branch);
+        debug!(
+            "Workflow NOT succeded for {}/{}",
+            j.repository.name, wf.head_branch
+        );
         return Ok(resp.into());
     }
     let msg = format!(
@@ -118,7 +119,7 @@ Job: {}
         wf.event,
         wf.path,
         wf.status,
-        wf.conclusion,
+        conclusion,
         wf.html_url,
     );
     send_msg(&msg, &req.state().hook).await?;
