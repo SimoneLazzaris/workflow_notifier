@@ -1,0 +1,73 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wfnotify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      deployment: wfnotify
+  template:
+    metadata:
+      labels:
+        deployment: wfnotify
+    spec:
+      containers:
+      - name: wn
+        image: slazzaris/wn:latest
+        env:
+        - name: RUST_LOG
+          value: workflow_notifier=debug
+        - name: HOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: webhook
+              key: url
+        args:
+        - "--address"
+        - "0.0.0.0"
+        - "--webhook"
+        - "$(HOOK_URL)"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wfnotify
+spec:
+  ports:
+  - name: web
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    deployment: wfnotify
+---
+kind: Ingress
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: wfnotify
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.tls: "false"
+spec:
+  rules:
+  - host: "HOSTNAME_HERE"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: wfnotify
+            port:
+              name: web
+---
+apiVersion: v1
+data:
+  url: MATTERMOST_URL_WEBHOOK_BASE64_ENCODED
+kind: Secret
+metadata:
+  name: webhook
+type: Opaque
+
