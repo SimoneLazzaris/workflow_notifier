@@ -27,3 +27,14 @@ The only one that *really* has to be setup is the mattermost webhook.
 ### Logging
 This project uses (indirectly) env_logger, so to enable logging you can set the `RUST_LOG` environmental variable to the desired level, i.e. `RUST_LOG=debug` or `RUST_LOG=workflow_notifier=debug`.
 
+## Github configuration
+
+To use this hook, first you have to make the endpoint publicly reachable from github. You can use [ngrok](https://ngrok.com/) for that matter, or simply have a public DNS name (and TLS certificate) that resolve to an handler instance.
+
+Then, to activate the webhook for a repository in github, you need to go to the repository `Settings` -> `Webhooks` -> `Add webhook`. There, you enter the webhook url in the `Payload URL` textbox, select `application/json` as `Content Type`,  choose `Let me select individual events` and enable the `Workflow runs` events.
+
+## kubernetes deployment
+
+A reference resource definition `.yaml` file is included for kubernetes deployment, using `traefik` as ingress, but it is easily customizable to other ingresses.
+
+Just fix the secret, which will contain the mattermost hook URL, and the hostname.
