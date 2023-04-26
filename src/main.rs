@@ -66,9 +66,9 @@ async fn send_msg(text: &str, hook: &str) -> Result<reqwest::Response, reqwest::
     msg.insert("text", text);
     let client = reqwest::Client::new();
     let res = client.post(hook).json(&msg).send().await;
-    match res {
+    match &res {
         Ok(_) => info!("Message sent"),
-        Err(_) => error!("Error"),
+        Err(e) => error!("Error while sending: {:?}",e),
     }
     return res;
 }

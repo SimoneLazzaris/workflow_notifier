@@ -6,5 +6,9 @@ COPY src /app/src
 RUN cargo build -r
 
 FROM debian:11-slim as target
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && update-ca-certificates \
+ && apt-get clean
 COPY --from=builder /app/target/release/workflow_notifier /usr/local/bin/workflow_notifier
 ENTRYPOINT ["/usr/local/bin/workflow_notifier"]
