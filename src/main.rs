@@ -3,6 +3,11 @@ use reqwest;
 use std::collections::HashMap;
 use tide::log::{debug, error, info};
 use tide::prelude::*;
+use sha2::Sha256;
+use hmac::{Hmac, Mac};
+type HmacSha256 = Hmac<Sha256>;
+use regex::Regex;
+// use base64::{Engine as _, engine::general_purpose};
 
 // Configuration
 #[derive(Parser)]
@@ -13,11 +18,17 @@ struct Cfg {
     port: u16,
     #[arg(short, long, default_value = "http://mattermost/hook")]
     webhook: String,
+    #[arg(short, long)]
+    secret: Option<String>,
+    #[arg(short, long, default_value_t=false)]
+    enforce_signature: bool,
 }
 
 #[derive(Clone)]
 struct State {
     hook: String,
+    secret: Option<Vec<u8>>,
+    enforce: bool,
 }
 
 // JSON messages
@@ -66,7 +77,14 @@ async fn send_msg(text: &str, hook: &str) -> Result<reqwest::Response, reqwest::
 async fn main() -> tide::Result<()> {
     env_logger::init();
     let cfg = Cfg::parse();
-    let state = State { hook: cfg.webhook };
+    let state = State { 
+        hook: cfg.webhook,
+        secret: match cfg.secret {
+            None => None,
+            Some(x) => Some(x.as_bytes().to_vec()),
+        },
+        enforce: cfg.enforce_signature,
+    };
     let addr = format!("{}:{}", cfg.address, cfg.port);
     let mut app = tide::with_state(state);
     app.at("/webhook").post(incoming_webhook);
@@ -78,8 +96,47 @@ async fn main() -> tide::Result<()> {
     Ok(())
 }
 
+fn verify_secret(body: Vec<u8>, secret: &Option<Vec<u8>>, h: Option<&http_types::headers::HeaderValues>) -> Result<bool, tide::Error> {
+    if secret.is_none() {
+        debug!("Missing secret");
+        return Ok(true);
+    }
+    if h.is_none() {
+        debug!("Missing signature, but the secret is set");
+        return Ok(false);
+    }
+    let secret_str= secret.as_ref().unwrap();
+    let sigheader = h.unwrap();
+    let signature = sigheader.as_str();
+    let re = Regex::new(r"sha256=([0-9a-fA-F]+)").unwrap();
+    let caps = re.captures(signature);
+    if caps.is_none() {
+        debug!("Invalid signature received (regex)");
+        return Err(tide::Error::from_str(400, "Invalid signature"));
+    }
+    let hexsig = caps.unwrap().get(1).unwrap().as_str();
+    let mut mac = HmacSha256::new_from_slice(secret_str.as_slice()).expect("Invalid secret");
+    mac.update(body.as_slice());
+    let result = mac.finalize();
+    let code_hex = hex::encode(result.into_bytes());
+    debug!("CALC: {}, RECV: {}", code_hex, hexsig);
+    if code_hex != hexsig {
+        debug!("Signature mismatch");
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 async fn incoming_webhook(mut req: tide::Request<State>) -> tide::Result {
-    let j: Payload = req.body_json().await?;
+    let body = req.body_bytes().await?;
+    let j: Payload = serde_json::from_slice(&body)?;
+    let secret = &req.state().secret;
+    if !verify_secret(body, secret, req.header("x-hub-signature-256"))? {
+        info!("Signature mismatch!");
+        if req.state().enforce {
+            return Err(tide::Error::from_str(403, "Signature mismatch"));
+        }
+    }
     debug!("Processing event from {}/{}", j.sender.login, j.sender.id);
     if j.workflow_run.is_none() {
         debug!("Not a workflow");
